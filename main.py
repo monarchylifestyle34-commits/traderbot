@@ -20,6 +20,10 @@ app = FastAPI(title="Sweep Reversal Trading Bot")
 
 REQUIRED_FIELDS = {"event", "direction", "symbol", "entry_trigger", "stop", "target"}
 
+@app.get("/")
+async def ping(request: Request):
+    return "PONG"
+
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -60,7 +64,6 @@ async def status():
         "open_positions": risk_manager.open_positions,
         "env": settings.tradovate_env,
     }
-
 
 @app.post("/admin/reset-kill-switch")
 async def reset_kill_switch(request: Request):
