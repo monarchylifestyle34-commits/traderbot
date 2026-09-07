@@ -88,6 +88,7 @@ bullMsg = '{"event":"setup","direction":"long","symbol":"' + syminfo.ticker +
      ',"stop":' + str.tostring(setupStop) +
      ',"target":' + str.tostring(setupTarget) +
      ',"ref_high":' + str.tostring(refHigh) +
+     ',"secret":"<change this>"' +
      ',"ref_low":' + str.tostring(refLow) + '}'
 
 bearMsg = '{"event":"setup","direction":"short","symbol":"' + syminfo.ticker +
@@ -96,6 +97,7 @@ bearMsg = '{"event":"setup","direction":"short","symbol":"' + syminfo.ticker +
      ',"stop":' + str.tostring(setupStop) +
      ',"target":' + str.tostring(setupTarget) +
      ',"ref_high":' + str.tostring(refHigh) +
+     ',"secret":"<change this>"' +
      ',"ref_low":' + str.tostring(refLow) + '}'
 
 alertcondition(bullishReversal, title="Bullish Sweep Setup", message="{{strategy.order.alert_message}}")
