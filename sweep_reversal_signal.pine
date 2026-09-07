@@ -1,0 +1,107 @@
+//@version=6
+indicator("Liquidity Sweep Reversal Signal", overlay=true)
+
+// ============================================================
+// SETTINGS
+// ============================================================
+rrTarget   = input.float(1.75, "Risk:Reward Target", minval=1.0, maxval=5.0, step=0.25)
+minBodyPct = input.float(30.0, "Min Reversal Body % of Range", minval=0.0, maxval=100.0)
+
+// ============================================================
+// STATE
+// ============================================================
+var float refHigh = na
+var float refLow  = na
+var int   refBarIndex = na
+
+var float sweepHigh = na   // high/low of the reversal (sweep) candle
+var float sweepLow  = na
+var bool  bullSetup = false
+var bool  bearSetup = false
+var float setupStop = na
+var float setupTarget = na
+
+// A candle is "reference" once it's fully closed. We work one bar back.
+prevHigh = high[1]
+prevLow  = low[1]
+
+// ============================================================
+// STEP 1+2+3: detect sweep-and-reverse on the most recently
+// closed pair of candles: bar[1] = reference, current closing
+// bar = sweep/reversal candle.
+// ============================================================
+sweptHigh = high > prevHigh          // this bar took out prior candle's high
+sweptLow  = low  < prevLow           // this bar took out prior candle's low
+
+closedBackInsideAfterHighSweep = sweptHigh and close < prevHigh
+closedBackInsideAfterLowSweep  = sweptLow  and close > prevLow
+
+bodySize  = math.abs(close - open)
+barRange  = high - low
+bodyPct   = barRange == 0 ? 0.0 : (bodySize / barRange) * 100.0
+
+bearishReversal = closedBackInsideAfterHighSweep and close < open and bodyPct >= minBodyPct
+bullishReversal = closedBackInsideAfterLowSweep  and close > open and bodyPct >= minBodyPct
+
+// Only fire once per bar close
+if barstate.isconfirmed
+    if bullishReversal
+        refHigh := prevHigh
+        refLow  := prevLow
+        sweepHigh := high
+        sweepLow  := low
+        bullSetup := true
+        bearSetup := false
+        risk = sweepHigh - sweepLow
+        setupStop := sweepLow
+        setupTarget := sweepHigh + risk * rrTarget
+
+    if bearishReversal
+        refHigh := prevHigh
+        refLow  := prevLow
+        sweepHigh := high
+        sweepLow  := low
+        bearSetup := true
+        bullSetup := false
+        risk = sweepHigh - sweepLow
+        setupStop := sweepHigh
+        setupTarget := sweepLow - risk * rrTarget
+
+// ============================================================
+// PLOTTING (visual confirmation on chart)
+// ============================================================
+plotshape(bullishReversal, title="Bull Sweep Reversal", style=shape.triangleup,
+     location=location.belowbar, color=color.green, size=size.small)
+plotshape(bearishReversal, title="Bear Sweep Reversal", style=shape.triangledown,
+     location=location.abovebar, color=color.red, size=size.small)
+
+// ============================================================
+// ALERTS — fire JSON payload to your Python webhook receiver.
+// Configure the alert message in TradingView's Create Alert
+// dialog using these placeholders, or paste the templates below
+// directly as the Message when creating the alert on this
+// condition. Set trigger = "Once Per Bar Close".
+// ============================================================
+bullMsg = '{"event":"setup","direction":"long","symbol":"' + syminfo.ticker +
+     '","timeframe":"' + timeframe.period +
+     '","entry_trigger":' + str.tostring(sweepHigh) +
+     ',"stop":' + str.tostring(setupStop) +
+     ',"target":' + str.tostring(setupTarget) +
+     ',"ref_high":' + str.tostring(refHigh) +
+     ',"ref_low":' + str.tostring(refLow) + '}'
+
+bearMsg = '{"event":"setup","direction":"short","symbol":"' + syminfo.ticker +
+     '","timeframe":"' + timeframe.period +
+     '","entry_trigger":' + str.tostring(sweepLow) +
+     ',"stop":' + str.tostring(setupStop) +
+     ',"target":' + str.tostring(setupTarget) +
+     ',"ref_high":' + str.tostring(refHigh) +
+     ',"ref_low":' + str.tostring(refLow) + '}'
+
+alertcondition(bullishReversal, title="Bullish Sweep Setup", message="{{strategy.order.alert_message}}")
+alertcondition(bearishReversal, title="Bearish Sweep Setup", message="{{strategy.order.alert_message}}")
+
+if barstate.isconfirmed and bullishReversal
+    alert(bullMsg, alert.freq_once_per_bar_close)
+if barstate.isconfirmed and bearishReversal
+    alert(bearMsg, alert.freq_once_per_bar_close)
