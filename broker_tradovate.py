@@ -14,6 +14,7 @@ import time
 import logging
 import httpx
 
+from broker import OrderResult
 from config import settings
 
 log = logging.getLogger("tradovate")
@@ -29,12 +30,17 @@ MD_BASE_URLS = {
 
 
 class TradovateClient:
+    name = "tradovate"
+
     def __init__(self):
         self.base_url = BASE_URLS[settings.tradovate_env]
         self.md_base_url = MD_BASE_URLS[settings.tradovate_env]
         self._access_token = None
         self._token_expiry = 0
         self._client = httpx.Client(timeout=10.0)
+
+    def _symbol(self, signal_symbol: str) -> str:
+        return settings.tradovate_symbol_map.get(signal_symbol.upper(), signal_symbol)
 
     # ------------------------------------------------------------
     # AUTH
@@ -73,11 +79,16 @@ class TradovateClient:
         prefer the market-data WebSocket (md.tradovateapi.com) over polling
         REST — this is a simple version to keep the scaffolding readable.
         """
-        r = self._client.get(
-            f"{self.md_base_url}/md/getQuote",
-            params={"symbol": symbol},
-            headers=self._headers(),
-        )
+        broker_symbol = self._symbol(symbol)
+        try:
+            r = self._client.get(
+                f"{self.md_base_url}/md/getQuote",
+                params={"symbol": broker_symbol},
+                headers=self._headers(),
+            )
+        except Exception as exc:
+            log.warning("Quote fetch failed for %s: %s", broker_symbol, exc)
+            return None
         if r.status_code != 200:
             log.warning("Quote fetch failed (%s): %s", r.status_code, r.text)
             return None
@@ -91,44 +102,65 @@ class TradovateClient:
         self,
         symbol: str,
         action: str,       # "Buy" or "Sell"
-        qty: int,
+        qty: float,
         stop_price: float,
         target_price: float,
-    ) -> dict:
+    ) -> OrderResult:
         """
         Places a market entry with attached stop-loss and take-profit.
         Tradovate's OSO (Order-Sends-Order) structure is the standard way
         to attach bracket legs — verify current field names against the
         /order/placeOSO endpoint docs before relying on this in live trading.
         """
-        payload = {
-            "accountSpec": settings.tradovate_username,
-            "accountId": int(settings.tradovate_account_id),
-            "action": action,
-            "symbol": symbol,
-            "orderQty": qty,
-            "orderType": "Market",
-            "isAutomated": True,
-            "bracket1": {
-                "action": "Sell" if action == "Buy" else "Buy",
-                "orderType": "Stop",
-                "stopPrice": stop_price,
-            },
-            "bracket2": {
-                "action": "Sell" if action == "Buy" else "Buy",
-                "orderType": "Limit",
-                "price": target_price,
-            },
-        }
-        r = self._client.post(
-            f"{self.base_url}/order/placeOSO", json=payload, headers=self._headers()
+        if not float(qty).is_integer() or qty <= 0:
+            return OrderResult(
+                success=False,
+                broker=self.name,
+                error="Tradovate quantity must be a positive whole number of contracts",
+            )
+
+        broker_symbol = self._symbol(symbol)
+        try:
+            payload = {
+                "accountSpec": settings.tradovate_username,
+                "accountId": int(settings.tradovate_account_id),
+                "action": action,
+                "symbol": broker_symbol,
+                "orderQty": int(qty),
+                "orderType": "Market",
+                "isAutomated": True,
+                "bracket1": {
+                    "action": "Sell" if action == "Buy" else "Buy",
+                    "orderType": "Stop",
+                    "stopPrice": stop_price,
+                },
+                "bracket2": {
+                    "action": "Sell" if action == "Buy" else "Buy",
+                    "orderType": "Limit",
+                    "price": target_price,
+                },
+            }
+            r = self._client.post(
+                f"{self.base_url}/order/placeOSO", json=payload, headers=self._headers()
+            )
+            r.raise_for_status()
+            result = r.json()
+        except Exception as exc:
+            log.error("Tradovate order placement failed: %s", exc)
+            return OrderResult(success=False, broker=self.name, error=str(exc))
+
+        if result.get("failureReason"):
+            error = result.get("failureText") or result["failureReason"]
+            log.error("Tradovate order placement failed: %s", result)
+            return OrderResult(success=False, broker=self.name, error=error, raw=result)
+
+        log.info("Order placed: %s %s x%s -> %s", action, broker_symbol, qty, result)
+        return OrderResult(
+            success=True,
+            broker=self.name,
+            order_id=str(result["orderId"]) if result.get("orderId") is not None else None,
+            raw=result,
         )
-        result = r.json()
-        if r.status_code != 200 or result.get("failureReason"):
-            log.error("Order placement failed: %s", result)
-        else:
-            log.info("Order placed: %s %s x%s -> %s", action, symbol, qty, result)
-        return result
 
-
-tradovate = TradovateClient()
+    def close(self) -> None:
+        self._client.close()

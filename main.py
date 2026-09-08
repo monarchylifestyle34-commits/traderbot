@@ -10,6 +10,7 @@ import logging
 from fastapi import FastAPI, Request, HTTPException
 
 from config import settings
+from broker import broker
 from watcher import start_watch_thread
 from risk import risk_manager
 
@@ -47,7 +48,7 @@ async def webhook(request: Request):
 
     log.info("Received setup: %s", body)
 
-    ok, reason = risk_manager.can_open_new_trade(settings.max_contracts_per_trade)
+    ok, reason = risk_manager.can_open_new_trade(settings.order_quantity)
     if not ok:
         log.warning("Setup received but rejected by risk manager: %s", reason)
         return {"status": "rejected", "reason": reason}
@@ -62,8 +63,14 @@ async def status():
         "kill_switch": risk_manager.kill_switch,
         "realized_pnl_today": risk_manager.realized_pnl_today,
         "open_positions": risk_manager.open_positions,
-        "env": settings.tradovate_env,
+        "broker": broker.name,
+        "env": settings.broker_environment,
     }
+
+
+@app.on_event("shutdown")
+async def shutdown_broker():
+    broker.close()
 
 @app.post("/admin/reset-kill-switch")
 async def reset_kill_switch(request: Request):

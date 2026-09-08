@@ -10,7 +10,7 @@ import logging
 import threading
 
 from config import settings
-from broker_tradovate import tradovate
+from broker import broker
 from risk import risk_manager
 
 log = logging.getLogger("watcher")
@@ -36,7 +36,7 @@ def watch_and_enter(setup: dict):
     )
 
     while time.time() < deadline:
-        price = tradovate.get_last_price(symbol)
+        price = broker.get_last_price(symbol)
         if price is None:
             time.sleep(1)
             continue
@@ -46,21 +46,23 @@ def watch_and_enter(setup: dict):
             or (direction == "short" and price <= entry_trigger)
         )
         if triggered:
-            ok, reason = risk_manager.can_open_new_trade(settings.max_contracts_per_trade)
+            ok, reason = risk_manager.can_open_new_trade(settings.order_quantity)
             if not ok:
                 log.warning("Entry triggered for %s but blocked by risk manager: %s", symbol, reason)
                 return
 
             action = "Buy" if direction == "long" else "Sell"
-            result = tradovate.place_bracket_order(
+            result = broker.place_bracket_order(
                 symbol=symbol,
                 action=action,
-                qty=settings.max_contracts_per_trade,
+                qty=settings.order_quantity,
                 stop_price=stop,
                 target_price=target,
             )
-            if not result.get("failureReason"):
+            if result.success:
                 risk_manager.register_open()
+            else:
+                log.error("%s rejected order for %s: %s", broker.name, symbol, result.error)
             return
 
         time.sleep(1)

@@ -36,7 +36,7 @@ class RiskManager:
                 "no new trades until manually reset.", self.realized_pnl_today
             )
 
-    def can_open_new_trade(self, contracts: int) -> tuple[bool, str]:
+    def can_open_new_trade(self, quantity: float) -> tuple[bool, str]:
         self._roll_day_if_needed()
 
         if self.kill_switch:
@@ -45,10 +45,13 @@ class RiskManager:
         if self.open_positions >= settings.max_open_positions:
             return False, f"max open positions ({settings.max_open_positions}) reached"
 
-        if contracts > settings.max_contracts_per_trade:
+        if quantity <= 0:
+            return False, "requested size must be greater than zero"
+
+        if quantity > settings.order_quantity:
             return False, (
-                f"requested size {contracts} exceeds max per-trade size "
-                f"({settings.max_contracts_per_trade})"
+                f"requested size {quantity} exceeds configured per-trade size "
+                f"({settings.order_quantity})"
             )
 
         if self.realized_pnl_today <= -abs(settings.daily_loss_limit_usd):
